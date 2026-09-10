@@ -1,0 +1,22 @@
+{
+  "LeadSeconds": 30,
+  "Sound": false,
+  "Topmost": true,
+  "RespectGameMode": true,
+  "RespectFocusAssist": true,
+  "PromoteWhenQuietEnds": true,
+  "QuietProcesses": [],
+  "OnlineMeetingsOnly": true,
+  "SkipDeclined": true,
+  "SkipFreeShowAs": true,
+  "SkipAllDay": true,
+  "PostStartGraceSeconds": 120,
+  "EvaluateIntervalSeconds": 5,
+  "CalendarRefreshSeconds": 120,
+  "LookaheadMinutes": 120,
+  "AutoDismissMinutes": 15,
+  "SnoozeSeconds": 60,
+  "SubjectExcludePatterns": [],
+  "PreferAppProtocol": true,
+  "LogRetentionDays": 14
+}

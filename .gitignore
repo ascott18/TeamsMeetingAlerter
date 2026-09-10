@@ -1,0 +1,5 @@
+# Local runtime data: encrypted token, alert dedupe state, pending alerts
+state/
+
+# Daily logs contain meeting subjects
+logs/
