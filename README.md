@@ -1,9 +1,12 @@
 # TeamsMeetingAlerter
 
+NOTICE: This is 100% pure AI vibe slop. It works though.
+
 Alerts you 30 seconds before a Teams meeting starts, because Teams often doesn't.
 
 An always-on-top window with a **Join** button appears in the bottom-right corner. No sound.
-When you're gaming it stays quiet and out of the way, then raises itself once you're out.
+While a fullscreen app is in the foreground it holds back and stays out of the way, then
+raises itself once you're back.
 
 ## Setup
 
@@ -28,17 +31,19 @@ task that starts at logon. No admin rights required.
 | `.\Uninstall.ps1` | Remove the task and stop the watcher |
 | `.\Uninstall.ps1 -ForgetSignIn` | Also delete the saved token |
 
-## Gaming / do-not-disturb
+## Do not disturb
 
-Detection uses `SHQueryUserNotificationState` plus a geometry check, so it catches
-both exclusive-fullscreen and borderless-windowed games — the latter looks like an
-ordinary window to Windows and is missed by the API alone.
+The alert holds back while a fullscreen app owns the foreground — a screen share, a
+presentation, anything a popup shouldn't land on top of — and while Focus Assist is on.
 
-While quiet, the alert appears without stealing focus and flashes in the taskbar.
-`PromoteWhenQuietEnds` then raises it as soon as you alt-tab out or exit the game.
+Detection uses `SHQueryUserNotificationState` plus a window-geometry check, since a
+borderless-fullscreen window looks ordinary to that API and is missed by it alone.
+
+While held back, the alert appears without stealing focus and flashes in the taskbar.
+`PromoteWhenQuietEnds` raises it as soon as the foreground clears.
 
 Add process names to `QuietProcesses` in `config.json` (wildcards allowed, no `.exe`)
-to force quiet mode for specific apps.
+to hold back for specific apps.
 
 ## config.json
 
@@ -47,11 +52,11 @@ to force quiet mode for specific apps.
 | `LeadSeconds` | 30 | How far before start to alert |
 | `Sound` / `SoundFile` | false | Looping alarm until you act |
 | `Topmost` | true | Keep the window above others |
-| `RespectGameMode` | true | Stand down for fullscreen apps and games |
-| `RespectFocusAssist` | true | Stand down for Do Not Disturb |
-| `PromoteWhenQuietEnds` | true | Raise the window once quiet mode clears |
-| `QuietProcesses` | `[]` | Extra process names that force quiet mode |
-| `OnlineMeetingsOnly` | true | Ignore meetings with no Teams join link |
+| `RespectFullscreenApps` | true | Hold back while a fullscreen app owns the foreground |
+| `RespectFocusAssist` | true | Hold back while Focus Assist is on |
+| `PromoteWhenQuietEnds` | true | Raise the window once the foreground clears |
+| `QuietProcesses` | `[]` | Extra process names that also hold the alert back |
+| `OnlineMeetingsOnly` | false | When true, ignore meetings with no Teams join link. Off by default, so in-person and linkless meetings alert too; their Join button reads "No link" and is disabled |
 | `SkipDeclined` / `SkipFreeShowAs` / `SkipAllDay` | true | Which events to ignore |
 | `SubjectExcludePatterns` | `[]` | Regexes; matching subjects never alert |
 | `PostStartGraceSeconds` | 120 | Don't alert for meetings already this far along |

@@ -80,7 +80,7 @@ if ($Login) {
     Write-Host ''
     Write-Host '  Checking calendar access...' -ForegroundColor DarkGray
     $next = @(Get-UpcomingMeetings -Config $cfg)
-    Write-Host ("  OK - {0} Teams meeting(s) in the next {1} minutes." -f $next.Count, $cfg.LookaheadMinutes) -ForegroundColor Green
+    Write-Host ("  OK - {0} meeting(s) in the next {1} minutes." -f $next.Count, $cfg.LookaheadMinutes) -ForegroundColor Green
     return
 }
 
@@ -108,9 +108,9 @@ if ($Status) {
     try {
         $next = @(Get-UpcomingMeetings -Config $cfg)
         if (-not $next.Count) {
-            Write-Host "  No Teams meetings in the next $($cfg.LookaheadMinutes) minutes."
+            Write-Host "  No meetings in the next $($cfg.LookaheadMinutes) minutes."
         } else {
-            Write-Host "  Next $($next.Count) Teams meeting(s):"
+            Write-Host "  Next $($next.Count) meeting(s):"
             foreach ($m in $next) {
                 $mins = [int]($m.StartUtc - [datetime]::UtcNow).TotalMinutes
                 Write-Host ('    {0}  (in {1,4} min)  {2}' -f $m.StartUtc.ToLocalTime().ToString('ddd HH:mm'), $mins, $m.Subject)
@@ -143,6 +143,8 @@ Write-AlerterLog ('watcher started (lead {0}s, refresh {1}s, lookahead {2} min)'
 
 $fired = Read-FiredState
 $meetings = @()
+$tracked = @{}
+$firstFetch = $true
 $lastFetchUtc = [datetime]::MinValue
 $failures = 0
 
@@ -156,6 +158,36 @@ while ($true) {
             $lastFetchUtc = $nowUtc
             if ($failures) { Write-AlerterLog 'calendar reachable again' }
             $failures = 0
+
+            # Log the set only when it changes: a steady state stays quiet, but
+            # silently seeing nothing becomes visible instead of looking idle.
+            $current = @{}
+            foreach ($m in $meetings) { $current[$m.Key] = $m }
+
+            if ($firstFetch) {
+                if ($meetings.Count) {
+                    $listed = ($meetings | ForEach-Object { "{0} '{1}'" -f $_.StartUtc.ToLocalTime().ToString('HH:mm'), $_.Subject }) -join ', '
+                    Write-AlerterLog ('tracking {0} meeting(s): {1}' -f $meetings.Count, $listed)
+                } else {
+                    Write-AlerterLog ('tracking 0 meetings in the next {0} min' -f $cfg.LookaheadMinutes)
+                }
+                $firstFetch = $false
+            } else {
+                foreach ($k in $current.Keys) {
+                    if (-not $tracked.ContainsKey($k)) {
+                        Write-AlerterLog ("found: '{0}' at {1}" -f $current[$k].Subject, $current[$k].StartUtc.ToLocalTime().ToString('HH:mm'))
+                    }
+                }
+                foreach ($k in $tracked.Keys) {
+                    if ($current.ContainsKey($k)) { continue }
+                    # Meetings that already started just age out of the rolling
+                    # window; only a future one vanishing means cancelled or moved.
+                    if ($tracked[$k].StartUtc -gt $nowUtc) {
+                        Write-AlerterLog ("gone: '{0}' was at {1}" -f $tracked[$k].Subject, $tracked[$k].StartUtc.ToLocalTime().ToString('HH:mm'))
+                    }
+                }
+            }
+            $tracked = $current
         } catch {
             $failures++
             $msg = $_.Exception.Message

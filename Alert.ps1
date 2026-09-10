@@ -11,7 +11,9 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $cfg = Get-AlerterConfig
 $meeting = Get-Content -LiteralPath $PendingFile -Raw -Encoding UTF8 | ConvertFrom-Json
-$startUtc = [datetime]::SpecifyKind([datetime]::Parse($meeting.StartUtc, [Globalization.CultureInfo]::InvariantCulture), 'Utc')
+# DateTimeOffset, not DateTime.Parse: the pending file carries a trailing Z, which
+# Parse already converts to local, so relabelling it Utc shifts it a second time.
+$startUtc = [datetimeoffset]::Parse($meeting.StartUtc, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
 $startLocal = $startUtc.ToLocalTime()
 
 $xaml = @'
@@ -96,8 +98,8 @@ if (-not $meeting.JoinUrl) { $joinBtn.IsEnabled = $false; $joinBtn.Content = 'No
 $quiet = Test-QuietMode -Config $cfg
 Write-AlerterLog ("alert window for '{0}' - quiet={1} ({2})" -f $meeting.Subject, $quiet.Quiet, $quiet.Reason)
 
-# When the user is gaming, appear without stealing the foreground; the promotion
-# timer below raises the window once that state clears.
+# While held back, appear without stealing the foreground; the promotion timer
+# below raises the window once that state clears.
 $startQuiet = [bool]$quiet.Quiet
 $window.Topmost = (-not $startQuiet) -and [bool]$cfg.Topmost
 $window.ShowActivated = -not $startQuiet

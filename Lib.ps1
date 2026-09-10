@@ -15,7 +15,7 @@ $script:ConfigDefaults = [ordered]@{
     EvaluateIntervalSeconds = 5
     CalendarRefreshSeconds  = 120
     LookaheadMinutes        = 120
-    OnlineMeetingsOnly      = $true
+    OnlineMeetingsOnly      = $false
     SkipDeclined            = $true
     SkipFreeShowAs          = $true
     SkipAllDay              = $true
@@ -24,7 +24,7 @@ $script:ConfigDefaults = [ordered]@{
     Topmost                 = $true
     AutoDismissMinutes      = 15
     SnoozeSeconds           = 60
-    RespectGameMode         = $true
+    RespectFullscreenApps   = $true
     RespectFocusAssist      = $true
     PromoteWhenQuietEnds    = $true
     QuietProcesses          = @()
@@ -186,8 +186,14 @@ function Get-AccessToken {
 function ConvertFrom-GraphDateTime {
     param([string]$Value)
     if (-not $Value) { return $null }
-    $dt = [datetime]::Parse($Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None)
-    [datetime]::SpecifyKind($dt, 'Utc')
+    # Graph omits any offset while Prefer: outlook.timezone="UTC" is honored, but an
+    # explicit Z or offset must not be converted and then relabelled as UTC.
+    $dt = [datetime]::Parse($Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+    switch ($dt.Kind) {
+        'Utc'   { $dt }
+        'Local' { $dt.ToUniversalTime() }
+        default { [datetime]::SpecifyKind($dt, 'Utc') }
+    }
 }
 
 function Get-MeetingJoinUrl {
@@ -298,7 +304,7 @@ function Get-ForegroundProcessName {
     try { (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { $null }
 }
 
-# Borderless-windowed games look ordinary to SHQueryUserNotificationState, so a
+# A borderless-fullscreen window looks ordinary to SHQueryUserNotificationState, so a
 # foreground window that exactly covers its monitor also counts as do-not-interrupt.
 function Test-ForegroundIsFullScreen {
     Initialize-NativeTypes
@@ -331,9 +337,9 @@ function Test-QuietMode {
     $hr = [TMA.Native]::SHQueryUserNotificationState([ref]$state)
 
     if ($hr -eq 0) {
-        if ($Config.RespectGameMode -and $state -eq 3) { return [pscustomobject]@{ Quiet = $true; Reason = 'fullscreen Direct3D app (game)' } }
-        if ($Config.RespectGameMode -and $state -eq 4) { return [pscustomobject]@{ Quiet = $true; Reason = 'presentation mode' } }
-        if ($Config.RespectGameMode -and $state -eq 2) { return [pscustomobject]@{ Quiet = $true; Reason = 'fullscreen app / busy' } }
+        if ($Config.RespectFullscreenApps -and $state -eq 3) { return [pscustomobject]@{ Quiet = $true; Reason = 'fullscreen Direct3D app' } }
+        if ($Config.RespectFullscreenApps -and $state -eq 4) { return [pscustomobject]@{ Quiet = $true; Reason = 'presentation mode' } }
+        if ($Config.RespectFullscreenApps -and $state -eq 2) { return [pscustomobject]@{ Quiet = $true; Reason = 'fullscreen app / busy' } }
         if ($Config.RespectFocusAssist -and $state -eq 6) { return [pscustomobject]@{ Quiet = $true; Reason = 'focus assist / do not disturb' } }
     }
 
@@ -344,7 +350,7 @@ function Test-QuietMode {
         }
     }
 
-    if ($Config.RespectGameMode -and (Test-ForegroundIsFullScreen)) {
+    if ($Config.RespectFullscreenApps -and (Test-ForegroundIsFullScreen)) {
         return [pscustomobject]@{ Quiet = $true; Reason = "borderless-fullscreen app '$fg'" }
     }
 
