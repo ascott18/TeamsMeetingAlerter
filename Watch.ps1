@@ -141,79 +141,178 @@ if (-not $NoHide) { Hide-ConsoleWindow }
 Remove-OldLogs -RetentionDays ([int]$cfg.LogRetentionDays)
 Write-AlerterLog ('watcher started (lead {0}s, refresh {1}s, lookahead {2} min)' -f $cfg.LeadSeconds, $cfg.CalendarRefreshSeconds, $cfg.LookaheadMinutes)
 
-$fired = Read-FiredState
-$meetings = @()
-$tracked = @{}
-$firstFetch = $true
-$lastFetchUtc = [datetime]::MinValue
-$failures = 0
+$script:fired = Read-FiredState
+$script:meetings = @()
+$script:tracked = @{}
+$script:firstFetch = $true
+$script:lastFetchUtc = [datetime]::MinValue
+$script:failures = 0
+$script:health = 'ok'
 
-while ($true) {
+function Invoke-WatchPass {
     $nowUtc = [datetime]::UtcNow
 
-    $due = ($nowUtc - $lastFetchUtc).TotalSeconds -ge [int]$cfg.CalendarRefreshSeconds
+    $due = ($nowUtc - $script:lastFetchUtc).TotalSeconds -ge [int]$cfg.CalendarRefreshSeconds
     if ($due) {
         try {
-            $meetings = @(Get-UpcomingMeetings -Config $cfg)
-            $lastFetchUtc = $nowUtc
-            if ($failures) { Write-AlerterLog 'calendar reachable again' }
-            $failures = 0
+            $script:meetings = @(Get-UpcomingMeetings -Config $cfg)
+            $script:lastFetchUtc = $nowUtc
+            if ($script:failures) { Write-AlerterLog 'calendar reachable again' }
+            $script:failures = 0
+            $script:health = 'ok'
 
             # Log the set only when it changes: a steady state stays quiet, but
             # silently seeing nothing becomes visible instead of looking idle.
             $current = @{}
-            foreach ($m in $meetings) { $current[$m.Key] = $m }
+            foreach ($m in $script:meetings) { $current[$m.Key] = $m }
 
-            if ($firstFetch) {
-                if ($meetings.Count) {
-                    $listed = ($meetings | ForEach-Object { "{0} '{1}'" -f $_.StartUtc.ToLocalTime().ToString('HH:mm'), $_.Subject }) -join ', '
-                    Write-AlerterLog ('tracking {0} meeting(s): {1}' -f $meetings.Count, $listed)
+            if ($script:firstFetch) {
+                if ($script:meetings.Count) {
+                    $listed = ($script:meetings | ForEach-Object { "{0} '{1}'" -f $_.StartUtc.ToLocalTime().ToString('HH:mm'), $_.Subject }) -join ', '
+                    Write-AlerterLog ('tracking {0} meeting(s): {1}' -f $script:meetings.Count, $listed)
                 } else {
                     Write-AlerterLog ('tracking 0 meetings in the next {0} min' -f $cfg.LookaheadMinutes)
                 }
-                $firstFetch = $false
+                $script:firstFetch = $false
             } else {
                 foreach ($k in $current.Keys) {
-                    if (-not $tracked.ContainsKey($k)) {
+                    if (-not $script:tracked.ContainsKey($k)) {
                         Write-AlerterLog ("found: '{0}' at {1}" -f $current[$k].Subject, $current[$k].StartUtc.ToLocalTime().ToString('HH:mm'))
                     }
                 }
-                foreach ($k in $tracked.Keys) {
+                foreach ($k in $script:tracked.Keys) {
                     if ($current.ContainsKey($k)) { continue }
                     # Meetings that already started just age out of the rolling
                     # window; only a future one vanishing means cancelled or moved.
-                    if ($tracked[$k].StartUtc -gt $nowUtc) {
-                        Write-AlerterLog ("gone: '{0}' was at {1}" -f $tracked[$k].Subject, $tracked[$k].StartUtc.ToLocalTime().ToString('HH:mm'))
+                    if ($script:tracked[$k].StartUtc -gt $nowUtc) {
+                        Write-AlerterLog ("gone: '{0}' was at {1}" -f $script:tracked[$k].Subject, $script:tracked[$k].StartUtc.ToLocalTime().ToString('HH:mm'))
                     }
                 }
             }
-            $tracked = $current
+            $script:tracked = $current
         } catch {
-            $failures++
+            $script:failures++
             $msg = $_.Exception.Message
             if ($msg -eq 'NotSignedIn' -or $msg -match 'invalid_grant|AADSTS') {
                 Write-AlerterLog "sign-in needed - run: Watch.ps1 -Login  ($msg)" 'ERROR'
-                $lastFetchUtc = $nowUtc.AddSeconds(-[int]$cfg.CalendarRefreshSeconds).AddMinutes(10)
+                $script:health = 'error'
+                $script:lastFetchUtc = $nowUtc.AddSeconds(-[int]$cfg.CalendarRefreshSeconds).AddMinutes(10)
             } else {
                 # Back off on transient failures, but never past a few minutes.
-                $backoff = [Math]::Min(300, 15 * $failures)
-                Write-AlerterLog "calendar read failed (attempt $failures, retry in ${backoff}s): $msg" 'WARN'
-                $lastFetchUtc = $nowUtc.AddSeconds(-[int]$cfg.CalendarRefreshSeconds).AddSeconds($backoff)
+                $backoff = [Math]::Min(300, 15 * $script:failures)
+                Write-AlerterLog "calendar read failed (attempt $($script:failures), retry in ${backoff}s): $msg" 'WARN'
+                $script:health = 'warn'
+                $script:lastFetchUtc = $nowUtc.AddSeconds(-[int]$cfg.CalendarRefreshSeconds).AddSeconds($backoff)
             }
         }
     }
 
-    foreach ($m in $meetings) {
-        if ($fired.ContainsKey($m.Key)) { continue }
+    foreach ($m in $script:meetings) {
+        if ($script:fired.ContainsKey($m.Key)) { continue }
         $fireAt = $m.StartUtc.AddSeconds(-[int]$cfg.LeadSeconds)
         $tooLate = $m.StartUtc.AddSeconds([int]$cfg.PostStartGraceSeconds)
         if ($nowUtc -ge $fireAt -and $nowUtc -le $tooLate -and $nowUtc -lt $m.EndUtc) {
             try { Start-MeetingAlert -Meeting $m } catch { Write-AlerterLog "failed to launch alert: $($_.Exception.Message)" 'ERROR' }
-            $fired[$m.Key] = $m.StartUtc.ToString('o')
-            $fired = Save-FiredState -Map $fired
+            $script:fired[$m.Key] = $m.StartUtc.ToString('o')
+            $script:fired = Save-FiredState -Map $script:fired
         }
     }
+}
 
-    if ($Once) { break }
-    Start-Sleep -Seconds ([int]$cfg.EvaluateIntervalSeconds)
+# NotifyIcon.Text throws above 64 characters, so this must stay short.
+function Get-TrayStatusText {
+    if ($script:health -eq 'error') { return 'Meeting alerter: sign-in needed' }
+    if ($script:health -eq 'warn') { return 'Meeting alerter: calendar unreachable' }
+    if ($script:firstFetch) { return 'Meeting alerter: starting' }
+    $next = @($script:meetings | Where-Object { $_.StartUtc -gt [datetime]::UtcNow })
+    if (-not $next.Count) { return 'Meeting alerter: nothing upcoming' }
+    $text = 'Next: {0} {1}' -f $next[0].StartUtc.ToLocalTime().ToString('HH:mm'), $next[0].Subject
+    if ($text.Length -gt 63) { $text = $text.Substring(0, 60) + '...' }
+    $text
+}
+
+if ($Once) {
+    Invoke-WatchPass
+    return
+}
+
+$tray = $null
+if ($cfg.ShowTrayIcon) {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+        $icons = @{
+            ok    = New-TrayStateIcon -State 'ok'
+            warn  = New-TrayStateIcon -State 'warn'
+            error = New-TrayStateIcon -State 'error'
+        }
+
+        $tray = New-Object System.Windows.Forms.NotifyIcon
+        $tray.Icon = $icons['ok']
+        $tray.Text = 'Meeting alerter: starting'
+        $tray.Visible = $true
+
+        $menu = New-Object System.Windows.Forms.ContextMenuStrip
+        $miStatus = $menu.Items.Add('Starting...')
+        $miStatus.Enabled = $false
+        [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+        $miRefresh = $menu.Items.Add('Refresh now')
+        $miRefresh.Add_Click({ $script:lastFetchUtc = [datetime]::MinValue })
+
+        $miTest = $menu.Items.Add('Test alert')
+        $miTest.Add_Click({
+            Start-MeetingAlert -Meeting ([pscustomobject]@{
+                Subject   = 'Test alert - this is what a real one looks like'
+                Organizer = 'TeamsMeetingAlerter'
+                StartUtc  = [datetime]::UtcNow.AddSeconds([int]$cfg.LeadSeconds)
+                JoinUrl   = 'https://teams.microsoft.com/l/meetup-join/test'
+                WebLink   = $null
+            })
+        })
+
+        $miLogs = $menu.Items.Add('Open logs folder')
+        $miLogs.Add_Click({ Start-Process explorer.exe (Get-AlerterPath 'logs') })
+
+        [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+        $miExit = $menu.Items.Add('Exit')
+        $miExit.Add_Click({
+            Write-AlerterLog 'exited from tray menu'
+            [System.Windows.Forms.Application]::Exit()
+        })
+
+        $tray.ContextMenuStrip = $menu
+        $tray.Add_MouseDoubleClick({
+            $tray.ShowBalloonTip(4000, 'TeamsMeetingAlerter', (Get-TrayStatusText), [System.Windows.Forms.ToolTipIcon]::Info)
+        })
+    } catch {
+        Write-AlerterLog "tray icon unavailable, continuing without it: $($_.Exception.Message)" 'WARN'
+        $tray = $null
+    }
+}
+
+if ($tray) {
+    # A tray icon needs a pumping message loop, so the pass runs on a WinForms
+    # timer rather than a sleep loop.
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = [Math]::Max(1000, 1000 * [int]$cfg.EvaluateIntervalSeconds)
+    $timer.Add_Tick({
+        try { Invoke-WatchPass } catch { Write-AlerterLog "watch pass failed: $($_.Exception.Message)" 'ERROR' }
+        $status = Get-TrayStatusText
+        $tray.Icon = $icons[$script:health]
+        $tray.Text = $status
+        $miStatus.Text = $status
+    })
+    $timer.Start()
+    try {
+        [System.Windows.Forms.Application]::Run()
+    } finally {
+        $timer.Stop()
+        $tray.Visible = $false
+        $tray.Dispose()
+    }
+} else {
+    while ($true) {
+        try { Invoke-WatchPass } catch { Write-AlerterLog "watch pass failed: $($_.Exception.Message)" 'ERROR' }
+        Start-Sleep -Seconds ([int]$cfg.EvaluateIntervalSeconds)
+    }
 }

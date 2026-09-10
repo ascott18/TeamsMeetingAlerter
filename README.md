@@ -8,6 +8,8 @@ An always-on-top window with a **Join** button appears in the bottom-right corne
 While a fullscreen app is in the foreground it holds back and stays out of the way, then
 raises itself once you're back.
 
+![The alert window: subject, start time, organizer, a live countdown, and Snooze / Dismiss / Join buttons](Screenshot.png)
+
 ## Setup
 
 One time, from this folder:
@@ -31,6 +33,28 @@ task that starts at logon. No admin rights required.
 | `.\Uninstall.ps1` | Remove the task and stop the watcher |
 | `.\Uninstall.ps1 -ForgetSignIn` | Also delete the saved token |
 
+## Tray icon
+
+A clock icon sits in the notification area while the watcher is running, and its
+colour is the health state:
+
+| Colour | Meaning |
+| --- | --- |
+| Blue | Running, calendar reading fine |
+| Amber | Calendar unreachable, backing off and retrying |
+| Red | Sign-in needed — run `.\Watch.ps1 -Login` |
+
+Hover for the next meeting, double-click for the same as a balloon. Right-click gives
+**Refresh now**, **Test alert**, **Open logs folder** and **Exit**.
+
+Because a tray icon needs a pumping message loop, the watch pass runs on a WinForms
+timer and the scheduled task is registered with `-STA`. Set `ShowTrayIcon` to false to
+go back to a plain sleep loop with no icon; if the icon can't be created for any reason
+the watcher logs a warning and falls back to that automatically.
+
+**Exit** stops the current watcher only — the task's 15-minute self-heal trigger will
+start it again. Use `.\Uninstall.ps1` to stop it for good.
+
 ## Do not disturb
 
 The alert holds back while a fullscreen app owns the foreground — a screen share, a
@@ -52,6 +76,7 @@ to hold back for specific apps.
 | `LeadSeconds` | 30 | How far before start to alert |
 | `Sound` / `SoundFile` | false | Looping alarm until you act |
 | `Topmost` | true | Keep the window above others |
+| `ShowTrayIcon` | true | Notification-area icon showing run and health state |
 | `RespectFullscreenApps` | true | Hold back while a fullscreen app owns the foreground |
 | `RespectFocusAssist` | true | Hold back while Focus Assist is on |
 | `PromoteWhenQuietEnds` | true | Raise the window once the foreground clears |

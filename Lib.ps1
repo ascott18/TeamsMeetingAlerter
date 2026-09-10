@@ -30,6 +30,7 @@ $script:ConfigDefaults = [ordered]@{
     QuietProcesses          = @()
     SubjectExcludePatterns  = @()
     PreferAppProtocol       = $true
+    ShowTrayIcon            = $true
     LogRetentionDays        = 14
 }
 
@@ -279,6 +280,7 @@ namespace TMA {
     [DllImport("user32.dll")] public static extern bool FlashWindowEx(ref FLASHWINFO info);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr hIcon);
 
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
@@ -367,6 +369,49 @@ function Start-TaskbarFlash {
     $fw.uCount = 0
     $fw.dwTimeout = 0
     [void][TMA.Native]::FlashWindowEx([ref]$fw)
+}
+
+# ---------- tray icon ----------
+
+# Drawn rather than shipped as an .ico so the colour can carry health state.
+function New-TrayStateIcon {
+    param([ValidateSet('ok', 'warn', 'error')][string]$State = 'ok')
+    Add-Type -AssemblyName System.Drawing
+    $fill = switch ($State) {
+        'warn'  { [System.Drawing.Color]::FromArgb(255, 214, 154, 46) }
+        'error' { [System.Drawing.Color]::FromArgb(255, 209, 74, 74) }
+        default { [System.Drawing.Color]::FromArgb(255, 59, 118, 217) }
+    }
+
+    $bmp = New-Object System.Drawing.Bitmap 32, 32
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $brush = New-Object System.Drawing.SolidBrush $fill
+        $g.FillEllipse($brush, 2, 2, 27, 27)
+        # Clock hands stay legible when the shell scales this down to 16px.
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 3
+        $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+        $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+        $g.DrawLine($pen, 16, 16, 16, 8)
+        $g.DrawLine($pen, 16, 16, 22, 19)
+        $brush.Dispose()
+        $pen.Dispose()
+    } finally {
+        $g.Dispose()
+    }
+
+    $hicon = $bmp.GetHicon()
+    try {
+        # Clone() detaches the managed copy so the raw HICON can be freed here
+        # instead of leaking one handle per icon built.
+        [System.Drawing.Icon]([System.Drawing.Icon]::FromHandle($hicon).Clone())
+    } finally {
+        Initialize-NativeTypes
+        [void][TMA.Native]::DestroyIcon($hicon)
+        $bmp.Dispose()
+    }
 }
 
 function Open-MeetingJoinUrl {

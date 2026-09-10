@@ -18,5 +18,6 @@
   "SnoozeSeconds": 60,
   "SubjectExcludePatterns": [],
   "PreferAppProtocol": true,
+  "ShowTrayIcon": true,
   "LogRetentionDays": 14
 }

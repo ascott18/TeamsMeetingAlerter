@@ -14,7 +14,8 @@ if (-not $SkipLogin -and -not (Read-RefreshToken)) {
 }
 
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$argline = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Get-AlerterPath 'Watch.ps1')
+# -STA is required: the tray icon's NotifyIcon and menu need a single-threaded apartment.
+$argline = '-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Get-AlerterPath 'Watch.ps1')
 $action = New-ScheduledTaskAction -Execute $powershell -Argument $argline -WorkingDirectory $PSScriptRoot
 
 $userId = '{0}\{1}' -f $env:USERDOMAIN, $env:USERNAME
@@ -32,6 +33,13 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $healTrigger) `
     -Principal $principal -Settings $settings -Force `
     -Description 'Alerts before Teams meetings start, because Teams often does not.' | Out-Null
+
+# Re-running the installer has to replace a running watcher: the task's
+# IgnoreNew policy would otherwise discard the start and leave old code running.
+Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -like '*Watch.ps1*' -and $_.CommandLine -notlike '*-Login*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 Start-ScheduledTask -TaskName $taskName
 
