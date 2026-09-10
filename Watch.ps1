@@ -79,7 +79,7 @@ if ($Login) {
     Invoke-DeviceLogin -Config $cfg | Out-Null
     Write-Host ''
     Write-Host '  Checking calendar access...' -ForegroundColor DarkGray
-    $next = Get-UpcomingMeetings -Config $cfg
+    $next = @(Get-UpcomingMeetings -Config $cfg)
     Write-Host ("  OK - {0} Teams meeting(s) in the next {1} minutes." -f $next.Count, $cfg.LookaheadMinutes) -ForegroundColor Green
     return
 }
@@ -106,7 +106,7 @@ if ($Status) {
         return
     }
     try {
-        $next = Get-UpcomingMeetings -Config $cfg
+        $next = @(Get-UpcomingMeetings -Config $cfg)
         if (-not $next.Count) {
             Write-Host "  No Teams meetings in the next $($cfg.LookaheadMinutes) minutes."
         } else {
@@ -152,7 +152,7 @@ while ($true) {
     $due = ($nowUtc - $lastFetchUtc).TotalSeconds -ge [int]$cfg.CalendarRefreshSeconds
     if ($due) {
         try {
-            $meetings = Get-UpcomingMeetings -Config $cfg
+            $meetings = @(Get-UpcomingMeetings -Config $cfg)
             $lastFetchUtc = $nowUtc
             if ($failures) { Write-AlerterLog 'calendar reachable again' }
             $failures = 0

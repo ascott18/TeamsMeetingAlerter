@@ -94,14 +94,17 @@ function Save-RefreshToken {
     $dir = Get-AlerterPath 'state'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $enc = ConvertTo-SecureString $Token -AsPlainText -Force | ConvertFrom-SecureString
-    Set-Content -LiteralPath (Get-TokenFilePath) -Value $enc -Encoding ASCII
+    Set-Content -LiteralPath (Get-TokenFilePath) -Value $enc -Encoding ASCII -NoNewline
 }
 
 function Read-RefreshToken {
     $path = Get-TokenFilePath
     if (-not (Test-Path $path)) { return $null }
     try {
-        $sec = Get-Content -LiteralPath $path -Raw | ConvertTo-SecureString
+        # Trim matters: a trailing newline makes ConvertTo-SecureString reject the blob.
+        $raw = Get-Content -LiteralPath $path -Raw
+        if (-not $raw) { return $null }
+        $sec = $raw.Trim() | ConvertTo-SecureString
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
         try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
         finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
