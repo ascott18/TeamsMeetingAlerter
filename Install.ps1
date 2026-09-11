@@ -14,9 +14,15 @@ if (-not $SkipLogin -and -not (Read-RefreshToken)) {
 }
 
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+
+# Launched through conhost --headless, which creates no window at all. Hiding the
+# console is not enough on Windows 11: conhost hands the session off to Windows
+# Terminal, and the resulting tab belongs to Windows Terminal, so GetConsoleWindow()
+# and -WindowStyle Hidden both act on the wrong window and the tab stays on screen.
 # -STA is required: the tray icon's NotifyIcon and menu need a single-threaded apartment.
-$argline = '-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Get-AlerterPath 'Watch.ps1')
-$action = New-ScheduledTaskAction -Execute $powershell -Argument $argline -WorkingDirectory $PSScriptRoot
+$argline = '--headless "{0}" -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "{1}"' -f $powershell, (Get-AlerterPath 'Watch.ps1')
+$action = New-ScheduledTaskAction -Execute $conhost -Argument $argline -WorkingDirectory $PSScriptRoot
 
 $userId = '{0}\{1}' -f $env:USERDOMAIN, $env:USERNAME
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
