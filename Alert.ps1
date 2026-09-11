@@ -21,7 +21,7 @@ $xaml = @'
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Meeting starting" SizeToContent="WidthAndHeight"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
-        Background="Transparent" ShowInTaskbar="True">
+        Background="Transparent" ShowInTaskbar="True" Opacity="0">
   <Window.Resources>
     <Style TargetType="Button">
       <Setter Property="Foreground" Value="#FFE8E8EE"/>
@@ -48,10 +48,40 @@ $xaml = @'
       </Setter>
     </Style>
   </Window.Resources>
-  <Border CornerRadius="10" Background="#FF1C1C22" BorderBrush="#FF3C3C48" BorderThickness="1" Padding="18" Width="430">
+  <Border CornerRadius="10" Background="#FF1C1C22" BorderThickness="1" Padding="18" Width="430">
+    <Border.RenderTransform>
+      <TranslateTransform x:Name="CardSlide" Y="0"/>
+    </Border.RenderTransform>
+    <Border.BorderBrush>
+      <!-- Diagonal axis: a horizontal sweep lights both vertical edges at once, which
+           reads wrong on a rectangle. The highlight band sits off the card at either
+           end of the travel, so it passes occasionally rather than pulsing constantly. -->
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <LinearGradientBrush.RelativeTransform>
+          <TranslateTransform x:Name="Shimmer" X="-1" Y="-1"/>
+        </LinearGradientBrush.RelativeTransform>
+        <GradientStop Color="#FF3C3C48" Offset="0.0"/>
+        <GradientStop Color="#FF3C3C48" Offset="0.35"/>
+        <GradientStop Color="#FF9CC0FF" Offset="0.5"/>
+        <GradientStop Color="#FF3C3C48" Offset="0.65"/>
+        <GradientStop Color="#FF3C3C48" Offset="1.0"/>
+      </LinearGradientBrush>
+    </Border.BorderBrush>
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.55" Color="Black"/>
     </Border.Effect>
+    <Border.Triggers>
+      <EventTrigger RoutedEvent="Border.Loaded">
+        <BeginStoryboard>
+          <Storyboard>
+            <DoubleAnimation Storyboard.TargetName="Shimmer" Storyboard.TargetProperty="X"
+                             From="-1" To="1" Duration="0:0:2.6" RepeatBehavior="Forever"/>
+            <DoubleAnimation Storyboard.TargetName="Shimmer" Storyboard.TargetProperty="Y"
+                             From="-1" To="1" Duration="0:0:2.6" RepeatBehavior="Forever"/>
+          </Storyboard>
+        </BeginStoryboard>
+      </EventTrigger>
+    </Border.Triggers>
     <StackPanel>
       <TextBlock x:Name="Kicker" Text="MEETING STARTING" Foreground="#FF8AB4F8" FontSize="11" FontWeight="Bold"/>
       <TextBlock x:Name="Subject" Foreground="#FFFFFFFF" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,7,0,0"/>
@@ -88,6 +118,7 @@ $kickerText = $window.FindName('Kicker')
 $joinBtn = $window.FindName('JoinBtn')
 $snoozeBtn = $window.FindName('SnoozeBtn')
 $dismissBtn = $window.FindName('DismissBtn')
+$cardSlide = $window.FindName('CardSlide')
 
 $subjectText.Text = $meeting.Subject
 $metaParts = @($startLocal.ToString('h:mm tt'))
@@ -149,6 +180,10 @@ $snoozeBtn.Add_Click({
 
 $window.Add_MouseLeftButtonDown({ try { $window.DragMove() } catch { } })
 
+# The window starts at Opacity 0. Its final position needs ActualWidth/ActualHeight,
+# which SizeToContent only settles once the content has rendered - by which point a
+# visible window would already have been painted at the default 0,0 and would visibly
+# jump to the corner. So it is placed while still transparent, then revealed.
 $window.Add_ContentRendered({
     $wa = [System.Windows.SystemParameters]::WorkArea
     # Stagger stacked alerts so a second meeting does not hide the first.
@@ -156,6 +191,28 @@ $window.Add_ContentRendered({
     $offset = [Math]::Max(0, $others - 1) * 24
     $window.Left = $wa.Right - $window.ActualWidth - 16
     $window.Top = $wa.Bottom - $window.ActualHeight - 16 - $offset
+
+    try {
+        $ease = New-Object System.Windows.Media.Animation.CubicEase
+        $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+
+        $fade = New-Object System.Windows.Media.Animation.DoubleAnimation
+        $fade.From = 0.0
+        $fade.To = 1.0
+        $fade.Duration = [System.Windows.Duration][TimeSpan]::FromMilliseconds(220)
+        $window.BeginAnimation([System.Windows.Window]::OpacityProperty, $fade)
+
+        $slide = New-Object System.Windows.Media.Animation.DoubleAnimation
+        $slide.From = 16.0
+        $slide.To = 0.0
+        $slide.Duration = [System.Windows.Duration][TimeSpan]::FromMilliseconds(260)
+        $slide.EasingFunction = $ease
+        $cardSlide.BeginAnimation([System.Windows.Media.TranslateTransform]::YProperty, $slide)
+    } catch {
+        # Never leave the window stuck invisible if the animation cannot start.
+        $window.Opacity = 1
+    }
+
     if ($startQuiet) {
         try { Start-TaskbarFlash -WindowHandle (Get-WindowHandle) } catch { }
     }
