@@ -6,6 +6,8 @@ $script:AlerterRoot = $PSScriptRoot
 $script:GraphScope = 'https://graph.microsoft.com/Calendars.Read offline_access'
 $script:AccessToken = $null
 $script:AccessTokenExpiresUtc = [datetime]::MinValue
+# Invoke-RestMethod waits forever by default, and the watcher calls it on the UI thread.
+$script:HttpTimeoutSeconds = 30
 
 $script:ConfigDefaults = [ordered]@{
     ClientId                = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
@@ -121,7 +123,7 @@ function Invoke-DeviceLogin {
     param($Config)
     $tenant = $Config.Tenant
     $body = @{ client_id = $Config.ClientId; scope = $script:GraphScope }
-    $dc = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/devicecode" -Body $body
+    $dc = Invoke-RestMethod -Method Post -TimeoutSec $script:HttpTimeoutSeconds -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/devicecode" -Body $body
 
     Write-Host ''
     Write-Host '  Sign in so the alerter can read your calendar.' -ForegroundColor Cyan
@@ -142,7 +144,7 @@ function Invoke-DeviceLogin {
             device_code = $dc.device_code
         }
         try {
-            $tok = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" -Body $poll
+            $tok = Invoke-RestMethod -Method Post -TimeoutSec $script:HttpTimeoutSeconds -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" -Body $poll
             Save-RefreshToken $tok.refresh_token
             $script:AccessToken = $tok.access_token
             $script:AccessTokenExpiresUtc = [datetime]::UtcNow.AddSeconds([int]$tok.expires_in)
@@ -175,7 +177,7 @@ function Get-AccessToken {
         refresh_token = $refresh
         scope         = $script:GraphScope
     }
-    $tok = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$($Config.Tenant)/oauth2/v2.0/token" -Body $body
+    $tok = Invoke-RestMethod -Method Post -TimeoutSec $script:HttpTimeoutSeconds -Uri "https://login.microsoftonline.com/$($Config.Tenant)/oauth2/v2.0/token" -Body $body
     if ($tok.refresh_token) { Save-RefreshToken $tok.refresh_token }
     $script:AccessToken = $tok.access_token
     $script:AccessTokenExpiresUtc = [datetime]::UtcNow.AddSeconds([int]$tok.expires_in)
@@ -221,7 +223,7 @@ function Get-UpcomingMeetings {
 
     $raw = @()
     while ($uri) {
-        $page = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+        $page = Invoke-RestMethod -Method Get -TimeoutSec $script:HttpTimeoutSeconds -Uri $uri -Headers $headers
         if ($page.value) { $raw += $page.value }
         $uri = Get-Prop $page '@odata.nextLink'
     }
