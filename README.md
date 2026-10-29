@@ -44,6 +44,8 @@ colour is the health state:
 | Amber | Calendar unreachable, backing off and retrying |
 | Red | Sign-in needed — run `.\Watch.ps1 -Login` |
 
+A notification pops up when it turns red, or once it has been amber for 10 minutes.
+
 Hover for the next meeting, double-click for the same as a balloon. Right-click gives
 **Refresh now**, **Test alert**, **Open logs folder** and **Exit**.
 

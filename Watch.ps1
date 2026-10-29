@@ -148,6 +148,8 @@ $script:firstFetch = $true
 $script:lastFetchUtc = [datetime]::MinValue
 $script:failures = 0
 $script:health = 'ok'
+$script:failingSinceUtc = [datetime]::MinValue
+$script:notifiedHealth = 'ok'
 
 function Invoke-WatchPass {
     $nowUtc = [datetime]::UtcNow
@@ -192,7 +194,10 @@ function Invoke-WatchPass {
             $script:tracked = $current
         } catch {
             $script:failures++
+            if ($script:failures -eq 1) { $script:failingSinceUtc = $nowUtc }
             $msg = $_.Exception.Message
+            # Windows PowerShell leaves the response body (where invalid_grant lives) out of the exception message.
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $msg = "$msg $($_.ErrorDetails.Message)" }
             if ($msg -eq 'NotSignedIn' -or $msg -match 'invalid_grant|AADSTS') {
                 Write-AlerterLog "sign-in needed - run: Watch.ps1 -Login  ($msg)" 'ERROR'
                 $script:health = 'error'
@@ -301,6 +306,20 @@ if ($tray) {
         $tray.Icon = $icons[$script:health]
         $tray.Text = $status
         $miStatus.Text = $status
+
+        # One balloon per failure episode; brief network blips stay quiet.
+        if ($script:health -eq 'ok') {
+            $script:notifiedHealth = 'ok'
+        } elseif ($script:health -ne $script:notifiedHealth -and
+                  ($script:health -eq 'error' -or ([datetime]::UtcNow - $script:failingSinceUtc).TotalMinutes -ge 10)) {
+            $since = $script:failingSinceUtc.ToLocalTime().ToString('HH:mm')
+            if ($script:health -eq 'error') {
+                $tray.ShowBalloonTip(10000, 'Meeting alerts stopped', "Calendar sign-in needed since $since. Run: Watch.ps1 -Login", [System.Windows.Forms.ToolTipIcon]::Error)
+            } else {
+                $tray.ShowBalloonTip(10000, 'Meeting alerts stopped', "Calendar unreachable since $since.", [System.Windows.Forms.ToolTipIcon]::Warning)
+            }
+            $script:notifiedHealth = $script:health
+        }
     })
     $timer.Start()
     try {
